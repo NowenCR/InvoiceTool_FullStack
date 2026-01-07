@@ -28,7 +28,7 @@ import numpy as np
 from flask import Flask, request, jsonify, render_template, send_file, session
 from flask_cors import CORS
 from flask_session import Session
-
+from modules.quality_control import detect_complex_duplicates, validate_dates_by_origin
 # --- Módulos Propios ---
 from modules.loader import cargar_datos
 from modules.filters import aplicar_filtros_dinamicos
@@ -806,3 +806,63 @@ def download_excel_grouped(): return _generic_download(request.json, grouped=Tru
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
+
+#------------------------------------------------------------------------------
+# NUEVA SECCIÓN: CONTROL DE CALIDAD Y ERRORES
+# ------------------------------------------------------------------------------
+
+@app.route('/api/quality/detect_duplicates', methods=['POST'])
+def api_detect_duplicates():
+    """
+    Endpoint para detección avanzada de duplicados.
+    Recibe: { 'file_id': str, 'criteria': [list of columns] }
+    """
+    try:
+        data = request.json
+        _check_file_id(data.get('file_id'))
+        criteria = data.get('criteria', []) # Ej: ['Invoice #', 'Vendor Name']
+        
+        if not criteria:
+            return jsonify({"error": "Debe seleccionar al menos una columna criterio."}), 400
+
+        df = _get_df_from_session_as_df()
+        
+        # Llamamos a nuestro nuevo módulo
+        dupes_df = detect_complex_duplicates(df, criteria)
+        
+        return jsonify({
+            "status": "success",
+            "duplicates_count": len(dupes_df),
+            "data": dupes_df.to_dict('records')
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/quality/validate_dates', methods=['POST'])
+def api_validate_dates():
+    """
+    Endpoint para validación cruzada de fechas y países.
+    Recibe: { 'file_id': str, 'date_col': str, 'country_col': str }
+    """
+    try:
+        data = request.json
+        _check_file_id(data.get('file_id'))
+        
+        date_col = data.get('date_col')
+        country_col = data.get('country_col')
+        
+        df = _get_df_from_session_as_df()
+        
+        # Llamamos a la función de validación lógica
+        errores = validate_dates_by_origin(df, date_col, country_col)
+        
+        return jsonify({
+            "status": "success",
+            "errors_found": len(errores),
+            "report": errores
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
